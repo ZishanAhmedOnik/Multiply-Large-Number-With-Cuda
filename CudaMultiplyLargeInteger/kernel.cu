@@ -6,17 +6,17 @@
 #include <cstring>
 using namespace std;
 
-__global__ void multiplyDigits(char* d_str1, char* d_str2, int* d_matrix) {
-	int row = threadIdx.y;
-	int col = threadIdx.x;
+__global__ void multiplyDigits(char* d_str1, char* d_str2, int* d_matrix, int str1_len, int str2_len) {
+	int row = blockDim.y * blockIdx.x + threadIdx.y;
+	int col = blockDim.x * blockIdx.y + threadIdx.x;
 
-	int idx = row * blockDim.x + (col + (blockDim.y * row)) + 1 + (row);
+	int idx = row * str1_len + (col + (str2_len * row)) + 1 + (row);
 
 	d_matrix[idx] = (d_str2[row] - '0') * (d_str1[col] - '0');
 }
 
 __global__ void propagateCarries(int* d_matrix, int numCols) {
-	int idx = threadIdx.x * numCols;
+	int idx = blockDim.x * blockIdx.x + threadIdx.x * numCols;
 	int carry = 0;
 
 	for (int i = numCols - 1; i >= 0; i--) {
@@ -29,12 +29,14 @@ __global__ void propagateCarries(int* d_matrix, int numCols) {
 
 __global__ void sumCols(int* d_matrix, int* d_result, int numRows, int numCols) {
 	int sum = 0;
+
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 	
 	for (int i = 0; i < numRows; i++) {
-		sum += d_matrix[threadIdx.x + (numCols * i)];
+		sum += d_matrix[idx + (numCols * i)];
 	}
 
-	d_result[threadIdx.x] = sum;
+	d_result[idx] = sum;
 }
 
 __host__ void propagateCarryInFinalResult(int* h_result, int numCols) {
@@ -49,8 +51,8 @@ __host__ void propagateCarryInFinalResult(int* h_result, int numCols) {
 }
 
 int main() {
-	char* h_str1 = "123";
-	char* h_str2 = "456";
+	char* h_str1 = "111111";
+	char* h_str2 = "111111";
 
 	char* d_str1;
 	char* d_str2;
@@ -78,9 +80,13 @@ int main() {
 	cudaMemcpy(d_str1, h_str1, sizeof(char) * strlen(h_str1), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_str2, h_str2, sizeof(char) * strlen(h_str2), cudaMemcpyHostToDevice);
 
-	multiplyDigits<<<1, dim3(3, 3)>>>(d_str1, d_str2, d_matrix);
-	propagateCarries<<<1, 3>>>(d_matrix, col);
-	sumCols<<<1, col>>>(d_matrix, d_result, row, col);
+	dim3 gridDim(strlen(h_str1) / 2, strlen(h_str2) / 2);
+	dim3 blockDim(2, 2);
+
+	//multiplyDigits<<<gridDim, dim3(strlen(h_str1) / 2, strlen(h_str2) / 2)>>>(d_str1, d_str2, d_matrix, strlen(h_str1), strlen(h_str2));
+	multiplyDigits<<<gridDim, blockDim>>>(d_str1, d_str2, d_matrix, strlen(h_str1), strlen(h_str2));
+	propagateCarries<<<row / 2, 2>>>(d_matrix, col);
+	sumCols<<<col / 2, 2>>>(d_matrix, d_result, row, col);
 
 	cudaMemcpy(h_result, d_result, sizeof(int) * col, cudaMemcpyDeviceToHost);
 
